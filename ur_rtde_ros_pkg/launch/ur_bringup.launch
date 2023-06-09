@@ -1,0 +1,16 @@
+<launch>
+
+    <!-- yaw/pitch/roll in radians. (yaw is rotation about Z, pitch is rotation about Y, and roll is rotation about X) -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="world_base_transform" 
+        args="0 0 0 -1.5708 0 0  world base_link" /> 
+
+    <include file="$(find ur_robot_driver)/launch/ur5_bringup.launch">
+        <arg name="robot_ip" value="192.168.100.50" />
+    </include>
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ur_rtde_ros_pkg)/rviz/visualize.rviz" required="true" />
+
+</launch>
+
+
+

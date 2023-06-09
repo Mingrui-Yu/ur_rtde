@@ -1,0 +1,7 @@
+# request
+geometry_msgs/PoseStamped end_pose
+
+---
+
+# response
+bool success

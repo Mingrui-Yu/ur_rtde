@@ -1,0 +1,18 @@
+<launch>
+
+    <arg name="move_mode" default="0"/>
+
+    <!-- <include file="$(find dual_ur_ros)/launch/dual_ur5_bringup.launch"/> -->
+
+
+    <!-- 发布静态坐标变换，格式顺序为：x, y, z, qx, qy, qz, qw -->
+    <!-- 从前者坐标系转换至后者坐标系（后者坐标系在前者坐标系中的位姿） -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="world_base_transform" 
+        args="0 0 0 0 0 0 1  world dual_base" />
+
+
+    <node pkg="ur_rtde_ros_pkg" name="dual_ur_node" type="main_dual_ur.py" output="screen" />
+    <param name="move_mode" value="$(arg move_mode)"/>
+
+
+</launch>
