@@ -13,13 +13,14 @@ from scipy.spatial.transform import Rotation as sciR
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import TwistStamped
 from ur_rtde_msgs.msg import VectorStamped
+from ur_rtde_msgs.srv import ExecuteToPose, ExecuteToPoseResponse
 
 
 # --------------------------------------------------------------------------------
 class URrtdeNode():
     def __init__(self):
         ur_home_config = [-1.5952280203448694, -1.5429447332965296, -1.3991649786578577, -1.774517838154928, 1.639392614364624, -0.09030753770937139]
-        ur_tcp_offset_trans = [0, 0, 0]
+        ur_tcp_offset_trans = [0, -0.141, 0.33]
         ur_tcp_offset_rotvec = [0, 0, 0]
         ur_tcp_offset = ur_tcp_offset_trans + ur_tcp_offset_rotvec
         self.ur = URrtde("192.168.100.50", prefix="", home_pose=ur_home_config, 
@@ -29,6 +30,8 @@ class URrtdeNode():
         
         rospy.Subscriber("/control/arm/joint_vel_command", VectorStamped, self.armJointVelCommandCb)
         rospy.Subscriber("/control/arm/tcp_vel_in_world_command", TwistStamped, self.armTcpVelInWorldCommandCb)
+        self.exe_to_tcp_pose_srv = rospy.Service('/control/arm/tcp_pos', ExecuteToPose, self.armExeToTcpPoseCb)
+        
         
         
     # -----------------------------------------------------------------
@@ -40,6 +43,11 @@ class URrtdeNode():
     # -----------------------------------------------------------------
     def armTcpVelInWorldCommandCb(self, msg):
         self.ur.controlTcpVel(msg, acceleration=1.0)
+        
+    # -----------------------------------------------------------------
+    def armExeToTcpPoseCb(self, req):
+        self.ur.moveToTcpPose(req.pose_stamped, req.speed, req.acceleration, req.asynchronous)
+        return ExecuteToPoseResponse(True)
 
 
     # -----------------------------------------------------------------

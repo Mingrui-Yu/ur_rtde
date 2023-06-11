@@ -63,7 +63,7 @@ add_service_files(
   FILES
   ExecuteJointTrajectory.srv
   ExecuteToJointPos.srv
-  ExecuteToEndPose.srv
+  ExecuteToPose.srv
 )
 
 ## Generate actions in the 'action' folder

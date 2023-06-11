@@ -1,0 +1,10 @@
+# request
+geometry_msgs/PoseStamped pose_stamped
+float32 speed
+float32 acceleration
+bool asynchronous
+
+---
+
+# response
+bool success
