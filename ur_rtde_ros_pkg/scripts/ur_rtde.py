@@ -17,7 +17,9 @@ import rtde_receive
 import tf2_ros
 from tf2_geometry_msgs import PointStamped, PoseStamped
 from geometry_msgs.msg import TwistStamped
+from moveit_msgs.msg import RobotTrajectory
 import tf.transformations
+
 from utils import *
 
 
@@ -33,11 +35,12 @@ class URrtde(object):
 
         self.tfBuffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tfBuffer)
-        # self.rot_mat_base2world = self.getBase2WorldRotationMatrix()
 
         # 设定工具末端相对于法兰盘中心的pose （手动测出来的）
         if tcp_offset is not None:
             self.rtde_c.setTcp(tcp_offset)
+        else:
+            self.rtde_c.setTcp([0, 0, 0, 0, 0, 0])
 
         # joint names
         self.joint_names = ["shoulder_pan_joint", 
@@ -93,7 +96,7 @@ class URrtde(object):
         tcp_pose_ros.header.frame_id = self.base_frame_id
 
         tcp_pose_ros.pose.position.x = tcp_pose[0]
-        tcp_pose_ros.pose.position.y= tcp_pose[1]
+        tcp_pose_ros.pose.position.y = tcp_pose[1]
         tcp_pose_ros.pose.position.z = tcp_pose[2]
 
         tcp_ori = np.array(tcp_pose[3:])
@@ -111,12 +114,13 @@ class URrtde(object):
     def getTcpPose(self, target_frame_id):
         posestamped_in_base = self.getTcpPoseInBase()
 
-        # 将base坐标系下的pose转为target_frame_id坐标系下
-        try:
-            posestamped = self.tfBuffer.transform(posestamped_in_base, target_frame_id)
-        except:
-            rospy.logerr("Cannot transform from " + posestamped_in_base.header.frame_id \
+        while not rospy.is_shutdown() and not self.tfBuffer.can_transform(posestamped_in_base.header.frame_id, target_frame_id, rospy.Time.now()):
+            rospy.loginfo_once("Waiting for TF tranform from " + posestamped_in_base.header.frame_id \
                 + " to " + target_frame_id + ".")
+
+        # 将base坐标系下的pose转为target_frame_id坐标系下
+        posestamped = self.tfBuffer.transform(posestamped_in_base, target_frame_id)
+
 
         return posestamped
 
@@ -164,20 +168,48 @@ class URrtde(object):
 
 
     # ----------------------------------------------------------------------
+    def moveToJointPos(self, target_joint_pos, speed=0.1, acceleration=0.5, asynchronous=False):
+        self.rtde_c.moveJ(target_joint_pos, speed, acceleration, asynchronous)
+
+
+    # ----------------------------------------------------------------------
     def moveToTcpPose(self, target_posestamped, speed=0.1, acceleration=0.5, asynchronous=False):
-        # 将pose转到base坐标系下
-        try:
-            target_posestamped_in_base = self.tfBuffer.transform(target_posestamped, self.base_frame_id)
-        except:
-            rospy.logerr("Cannot transform from " + target_posestamped.header.frame_id \
+        while not rospy.is_shutdown() and not self.tfBuffer.can_transform(target_posestamped.header.frame_id, self.base_frame_id, rospy.Time.now()):
+            rospy.loginfo_once("Waiting for TF tranform from " + target_posestamped.header.frame_id \
                 + " to " + self.base_frame_id + ".")
 
+        target_posestamped_in_base = self.tfBuffer.transform(target_posestamped, self.base_frame_id)
         target_pos, target_quat = rosPose2PosQuat(target_posestamped_in_base.pose)
         target_rotvec = sciR.from_quat(target_quat).as_rotvec()
 
         self.rtde_c.moveL(np.concatenate([target_pos, target_rotvec]), 
-            speed=speed, acceleration=acceleration, asynchronous=asynchronous) 
+            speed=speed, acceleration=acceleration, asynchronous=asynchronous) # time cost: ~0.02s
         
+
+    # ----------------------------------------------------------------------
+    def moveJointTrajectory(self, trajectory, asynchronous=False):
+        n_waypoints = len(trajectory.joint_trajectory.points)
+        joint_traj = []
+        for i in range(n_waypoints):
+            point = trajectory.joint_trajectory.points[i]
+
+            # 根据 waypoint 的时间戳，计算speed。默认为waypoint之间是匀速直线运动。
+            if i == 0:
+                speed = 0.1 
+            else:
+                last_point = trajectory.joint_trajectory.points[i-1]
+                delta_t = point.time_from_start.to_sec() - last_point.time_from_start.to_sec()
+                max_joint_movement = np.max(np.abs(np.array(point.positions) - np.array(last_point.positions)))
+                speed = max_joint_movement / delta_t
+
+            rtde_waypoint = point.positions # joint position
+            rtde_waypoint.append(1.0) # acceleration
+            rtde_waypoint.append(speed) # speed
+            rtde_waypoint.append(0) # blend
+
+            joint_traj.append(rtde_waypoint)
+
+        self.rtde_c.moveJ(joint_traj, asynchronous)
 
 
 

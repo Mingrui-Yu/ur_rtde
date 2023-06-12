@@ -2,119 +2,146 @@
 
 import rospy
 import numpy as np
-from ur_rtde import URrtde
 from scipy.spatial.transform import Rotation as sciR
-from utils import *
-
 from sensor_msgs.msg import JointState
 from ur_rtde_msgs.msg import VectorStamped
-# from my_msgs.srv import ExecuteToJointPosService, ExecuteToJointPosServiceResponse
-# from my_msgs.srv import ExecuteToEndPose, ExecuteToEndPoseResponse
+from moveit_msgs.msg import RobotTrajectory
+
+
+from ur_rtde import URrtde
+from dual_ur_rtde import DualURrtde
+from utils import *
+
+
 
 
 # --------------------------------------------------------------------------------
-class DualURrtde():
+class DualURrtdeNode():
     def __init__(self):
         # left arm
-        ur_0_home_pose = [-3.768959347401754, -2.5454705397235315, -1.4650076071368616, -2.263789955769674, -0.6454971472369593, -0.7995479742633265]
-        ur_0_tcp_offset_trans = rospy.get_param("robot/arm_0/tool_in_end/translation")
-        ur_0_tcp_offset_rotvec = sciR.from_quat(rospy.get_param("robot/arm_0/tool_in_end/rotation")).as_rotvec()
+        ur_0_home_pose = None
+        ur_0_tcp_offset_trans = rospy.get_param("robot_configs/arm_0/tcp_in_ee_pose/position")
+        ur_0_tcp_offset_rotvec = sciR.from_quat(rospy.get_param("robot_configs/arm_0/tcp_in_ee_pose/orientation")).as_rotvec()
         ur_0_tcp_offset = ur_0_tcp_offset_trans + ur_0_tcp_offset_rotvec.tolist()
-        self.ur_0 = URrtde("192.168.100.50", prefix="arm_0_", home_pose=ur_0_home_pose, 
-            tcp_offset=ur_0_tcp_offset, base_frame_id="arm_0_base", world_frame_id="dual_base")
+        arm_0 = URrtde("192.168.100.50", prefix="arm_0_", home_pose=ur_0_home_pose, 
+            tcp_offset=ur_0_tcp_offset, base_frame_id="arm_0_base", world_frame_id="world")
 
         # right arm
-        ur_1_home_pose = [-2.5164807478534144, -0.6666477362262171, 1.4899320602416992, -0.8363164106952112, 0.6629456281661987, 0.7799333930015564]
-        ur_1_tcp_offset_trans = rospy.get_param("robot/arm_1/tool_in_end/translation")
-        ur_1_tcp_offset_rotvec = sciR.from_quat(rospy.get_param("robot/arm_1/tool_in_end/rotation")).as_rotvec()
+        ur_1_home_pose = None
+        ur_1_tcp_offset_trans = rospy.get_param("robot_configs/arm_1/tcp_in_ee_pose/position")
+        ur_1_tcp_offset_rotvec = sciR.from_quat(rospy.get_param("robot_configs/arm_1/tcp_in_ee_pose/orientation")).as_rotvec()
         ur_1_tcp_offset = ur_1_tcp_offset_trans + ur_1_tcp_offset_rotvec.tolist()
-        self.ur_1 = URrtde("192.168.101.50", prefix="arm_1_", home_pose=ur_1_home_pose, 
-            tcp_offset=ur_1_tcp_offset, base_frame_id="arm_1_base", world_frame_id="dual_base")
+        arm_1 = URrtde("192.168.101.50", prefix="arm_1_", home_pose=ur_1_home_pose, 
+            tcp_offset=ur_1_tcp_offset, base_frame_id="arm_1_base", world_frame_id="world")
+        
+        self.dual_arm = DualURrtde(arm_0, arm_1)
 
 
-        self.dual_arm_joint_state_pub = rospy.Publisher("state/dual_arm/joint_states", JointState, queue_size=1)
+        # self.dual_arm_joint_state_pub = rospy.Publisher("state/dual_arm/joint_states", JointState, queue_size=1)
 
         rospy.Subscriber("control/dual_arm/joint_vel_command", VectorStamped, 
             self.dualArmJointVelCommandCb)
+        rospy.Subscriber("control/arm_0/joint_trajectory_command", RobotTrajectory, 
+            self.arm0JointTrajCommandCb)
+        rospy.Subscriber("control/arm_1/joint_trajectory_command", RobotTrajectory, 
+            self.arm1JointTrajCommandCb)
+        rospy.Subscriber("control/dual_arm/joint_trajectory_command", RobotTrajectory, 
+            self.arm1JointTrajCommandCb)
 
-        self.dual_arm_move_joint_pos_srv = rospy.Service("control/dual_arm/joint_pos_command", 
-            ExecuteToJointPosService, self.dualArmToJointPos)
+        # self.dual_arm_move_joint_pos_srv = rospy.Service("control/dual_arm/joint_pos_command", 
+        #     ExecuteToJointPosService, self.dualArmToJointPos)
 
-        self.dual_arm_move_end_pose_srv = rospy.Service("control/dual_arm/end_pose_command", 
-            ExecuteToEndPose, self.dualArmToEndPose)
+        # self.dual_arm_move_end_pose_srv = rospy.Service("control/dual_arm/end_pose_command", 
+        #     ExecuteToEndPose, self.dualArmToEndPose)
 
-        self.ros_rate = rospy.get_param("ros_rate/arm_rate")
+        # self.ros_rate = rospy.get_param("ros_rate/arm_rate")
 
 
     # -----------------------------------------------------------------
     def dualArmJointVelCommandCb(self, msg):
         dual_arm_joint_vel = msg.data
-        self.ur_0.rtde_c.speedJ(dual_arm_joint_vel[:6], acceleration=2.0, time=0.001)
-        self.ur_1.rtde_c.speedJ(dual_arm_joint_vel[6:], acceleration=2.0, time=0.001)
+        if len(dual_arm_joint_vel) != 12:
+            rospy.logerr("Invalid dual_arm_joint_vel command, the size is %d !", len(dual_arm_joint_vel))
 
+        self.dual_arm.arm_0.controlJointVel(dual_arm_joint_vel[:6])
+        self.dual_arm.arm_1.controlJointVel(dual_arm_joint_vel[6:])
+
+    
+    # -----------------------------------------------------------------
+    def arm0JointTrajCommandCb(self, msg):
+        self.dual_arm.arm_0.moveJointTrajectory(msg, asynchronous=True)
 
     # -----------------------------------------------------------------
-    def dualArmToJointPos(self, req):
-        dual_arm_joint_pos = req.target_joint_pos
-        self.ur_0.rtde_c.moveL_FK(dual_arm_joint_pos[:6], speed=0.1, acceleration=0.5, asynchronous=True) 
-        self.ur_1.rtde_c.moveL_FK(dual_arm_joint_pos[6:], speed=0.1, acceleration=0.5, asynchronous=True) 
-
-        # 等待达到目标位置
-        rate = rospy.Rate(self.ros_rate)
-        target_dual_arm_joint_pos = np.array(dual_arm_joint_pos)
-        rospy.loginfo("Moving to the target dual arm joint pos...")
-        while not rospy.is_shutdown():
-            current_dual_arm_joint_pos = np.array(self.ur_0.getJointAngle() + self.ur_1.getJointAngle())
-            # print("current_dual_arm_joint_pos: ", current_dual_arm_joint_pos)
-            # print("target_dual_arm_joint_pos: ", target_dual_arm_joint_pos)
-            if np.linalg.norm(current_dual_arm_joint_pos - target_dual_arm_joint_pos) < 1e-3:
-                rospy.loginfo("Done.")
-                break
-            rate.sleep()
-
-        return ExecuteToJointPosServiceResponse(True)
-
+    def arm1JointTrajCommandCb(self, msg):
+        self.dual_arm.arm_1.moveJointTrajectory(msg, asynchronous=True)
 
     # -----------------------------------------------------------------
-    def dualArmToEndPose(self, req):
-        self.ur_0.moveToTcpPose(req.end_0_pose, speed=0.1, acceleration=0.5, asynchronous=True)
-        self.ur_1.moveToTcpPose(req.end_1_pose, speed=0.1, acceleration=0.5, asynchronous=True)
+    def dualArmJointTrajCommandCb(self, msg):
+        self.dual_arm.moveJointTrajectory(msg, asynchronous=True)
 
-        # 等待达到目标位置
-        target_end_0_pos, target_end_0_quat = rosPose2PosQuat(req.end_0_pose.pose)
-        target_end_1_pos, target_end_1_quat = rosPose2PosQuat(req.end_1_pose.pose)
-        rate = rospy.Rate(self.ros_rate)
-        rospy.loginfo("Moving to the target dual arm end pose...")
-        while not rospy.is_shutdown():
-            current_end_0_posestamped = self.ur_0.getTcpPose("dual_base")
-            current_end_1_posestamped = self.ur_1.getTcpPose("dual_base")
-            current_end_0_pos, current_end_0_quat = rosPose2PosQuat(current_end_0_posestamped.pose)
-            current_end_1_pos, current_end_1_quat = rosPose2PosQuat(current_end_1_posestamped.pose)
 
-            if np.linalg.norm(target_end_0_pos - current_end_0_pos) < 1e-3 \
-                    and np.linalg.norm(target_end_0_quat - current_end_0_quat) < 1e-3 \
-                    and np.linalg.norm(target_end_1_pos - current_end_1_pos) < 1e-3 \
-                    and np.linalg.norm(target_end_1_quat - current_end_1_quat) < 1e-3:
-                rospy.loginfo("Done.")
-                break
-            rate.sleep()
+    # # -----------------------------------------------------------------
+    # def dualArmToJointPos(self, req):
+    #     dual_arm_joint_pos = req.target_joint_pos
+    #     self.ur_0.rtde_c.moveL_FK(dual_arm_joint_pos[:6], speed=0.1, acceleration=0.5, asynchronous=True) 
+    #     self.ur_1.rtde_c.moveL_FK(dual_arm_joint_pos[6:], speed=0.1, acceleration=0.5, asynchronous=True) 
 
-        return ExecuteToEndPoseResponse(True)
+    #     # 等待达到目标位置
+    #     rate = rospy.Rate(self.ros_rate)
+    #     target_dual_arm_joint_pos = np.array(dual_arm_joint_pos)
+    #     rospy.loginfo("Moving to the target dual arm joint pos...")
+    #     while not rospy.is_shutdown():
+    #         current_dual_arm_joint_pos = np.array(self.ur_0.getJointAngle() + self.ur_1.getJointAngle())
+    #         # print("current_dual_arm_joint_pos: ", current_dual_arm_joint_pos)
+    #         # print("target_dual_arm_joint_pos: ", target_dual_arm_joint_pos)
+    #         if np.linalg.norm(current_dual_arm_joint_pos - target_dual_arm_joint_pos) < 1e-3:
+    #             rospy.loginfo("Done.")
+    #             break
+    #         rate.sleep()
+
+    #     return ExecuteToJointPosServiceResponse(True)
+
+
+    # # -----------------------------------------------------------------
+    # def dualArmToEndPose(self, req):
+    #     self.ur_0.moveToTcpPose(req.end_0_pose, speed=0.1, acceleration=0.5, asynchronous=True)
+    #     self.ur_1.moveToTcpPose(req.end_1_pose, speed=0.1, acceleration=0.5, asynchronous=True)
+
+    #     # 等待达到目标位置
+    #     target_end_0_pos, target_end_0_quat = rosPose2PosQuat(req.end_0_pose.pose)
+    #     target_end_1_pos, target_end_1_quat = rosPose2PosQuat(req.end_1_pose.pose)
+    #     rate = rospy.Rate(self.ros_rate)
+    #     rospy.loginfo("Moving to the target dual arm end pose...")
+    #     while not rospy.is_shutdown():
+    #         current_end_0_posestamped = self.ur_0.getTcpPose("dual_base")
+    #         current_end_1_posestamped = self.ur_1.getTcpPose("dual_base")
+    #         current_end_0_pos, current_end_0_quat = rosPose2PosQuat(current_end_0_posestamped.pose)
+    #         current_end_1_pos, current_end_1_quat = rosPose2PosQuat(current_end_1_posestamped.pose)
+
+    #         if np.linalg.norm(target_end_0_pos - current_end_0_pos) < 1e-3 \
+    #                 and np.linalg.norm(target_end_0_quat - current_end_0_quat) < 1e-3 \
+    #                 and np.linalg.norm(target_end_1_pos - current_end_1_pos) < 1e-3 \
+    #                 and np.linalg.norm(target_end_1_quat - current_end_1_quat) < 1e-3:
+    #             rospy.loginfo("Done.")
+    #             break
+    #         rate.sleep()
+
+    #     return ExecuteToEndPoseResponse(True)
         
 
-    # -----------------------------------------------------------------
-    def getDualArmJointState(self):
-        joint_state = JointState()
-        joint_state.name = self.ur_0.joint_names + self.ur_1.joint_names
-        joint_state.position = self.ur_0.getJointAngle() + self.ur_1.getJointAngle()
-        joint_state.velocity = self.ur_0.getJointVel() + self.ur_1.getJointVel()
+    # # -----------------------------------------------------------------
+    # def getDualArmJointState(self):
+    #     joint_state = JointState()
+    #     joint_state.name = self.ur_0.joint_names + self.ur_1.joint_names
+    #     joint_state.position = self.ur_0.getJointAngle() + self.ur_1.getJointAngle()
+    #     joint_state.velocity = self.ur_0.getJointVel() + self.ur_1.getJointVel()
 
-        return joint_state
+    #     return joint_state
 
 
-    # -----------------------------------------------------------------
-    def publishDualArmJointState(self):
-        self.dual_arm_joint_state_pub.publish(self.getDualArmJointState())
+    # # -----------------------------------------------------------------
+    # def publishDualArmJointState(self):
+    #     self.dual_arm_joint_state_pub.publish(self.getDualArmJointState())
 
 
     # -----------------------------------------------------------------
@@ -122,21 +149,43 @@ class DualURrtde():
 
         rospy.loginfo("dual_ur_rtde_node starts.")
         # 打印初始时的关节角
-        print("arm_0 initial joint angle: ", self.ur_0.getJointAngle())
-        print("arm_1 initial joint angle: ", self.ur_1.getJointAngle())
+        print("arm_0 initial joint angle: ", self.dual_arm.arm_0.getJointAngle())
+        print("arm_1 initial joint angle: ", self.dual_arm.arm_1.getJointAngle())
 
-        rate = rospy.Rate(self.ros_rate)
+        # arm_0_joint_angle = self.dual_arm.arm_0.getJointAngle()
+        # arm_0_joint_angle.append(0.1)
+        # arm_0_joint_angle.append(0.1)
+        # arm_0_joint_angle.append(0.0)
 
-        while not rospy.is_shutdown():
+        # arm_0_traj = []
+        # arm_0_traj.append(arm_0_joint_angle)
 
-            self.publishDualArmJointState()
+        # arm_0_joint_angle[5] += np.pi / 6
+        # arm_0_traj.append(arm_0_joint_angle)
 
-            rate.sleep()
+        # arm_0_joint_angle[5] += np.pi / 6
+        # arm_0_traj.append(arm_0_joint_angle)
+
+        # arm_0_joint_angle[5] += np.pi / 6
+        # arm_0_traj.append(arm_0_joint_angle)
+
+        # print(arm_0_traj)
+
+        # self.dual_arm.arm_0.rtde_c.moveJ(arm_0_traj, asynchronous=False)
+
+
+
+        # rate = rospy.Rate(self.ros_rate)
+
+        # while not rospy.is_shutdown():
+
+        #     self.publishDualArmJointState()
+
+        #     rate.sleep()
 
 
         # shutdown the robots
-        self.ur_0.robotShutDown()
-        self.ur_1.robotShutDown()
+        self.dual_arm.robotShutDown()
 
 
 
@@ -147,7 +196,7 @@ if __name__ == "__main__":
     try:
         rospy.init_node("dual_ur_rtde_node")
         
-        dual_ur = DualURrtde()
+        dual_ur = DualURrtdeNode()
         dual_ur.main()
 
 
