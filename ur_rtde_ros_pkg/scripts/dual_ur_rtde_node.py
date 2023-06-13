@@ -36,8 +36,9 @@ class DualURrtdeNode():
         
         self.dual_arm = DualURrtde(arm_0, arm_1)
 
+        self.ros_rate = 30
 
-        # self.dual_arm_joint_state_pub = rospy.Publisher("state/dual_arm/joint_states", JointState, queue_size=1)
+        self.dual_arm_joint_state_pub = rospy.Publisher("state/dual_arm/joint_states", JointState, queue_size=1)
 
         rospy.Subscriber("control/dual_arm/joint_vel_command", VectorStamped, 
             self.dualArmJointVelCommandCb)
@@ -129,59 +130,35 @@ class DualURrtdeNode():
     #     return ExecuteToEndPoseResponse(True)
         
 
-    # # -----------------------------------------------------------------
-    # def getDualArmJointState(self):
-    #     joint_state = JointState()
-    #     joint_state.name = self.ur_0.joint_names + self.ur_1.joint_names
-    #     joint_state.position = self.ur_0.getJointAngle() + self.ur_1.getJointAngle()
-    #     joint_state.velocity = self.ur_0.getJointVel() + self.ur_1.getJointVel()
+    # -----------------------------------------------------------------
+    def getDualArmJointState(self):
+        joint_state = JointState()
+        joint_state.name = self.dual_arm.arm_0.joint_names + self.dual_arm.arm_1.joint_names
+        joint_state.position = self.dual_arm.arm_0.getJointAngle() + self.dual_arm.arm_1.getJointAngle()
+        joint_state.velocity = self.dual_arm.arm_0.getJointVel() + self.dual_arm.arm_1.getJointVel()
 
-    #     return joint_state
+        return joint_state
 
 
-    # # -----------------------------------------------------------------
-    # def publishDualArmJointState(self):
-    #     self.dual_arm_joint_state_pub.publish(self.getDualArmJointState())
+    # -----------------------------------------------------------------
+    def publishDualArmJointState(self):
+        self.dual_arm_joint_state_pub.publish(self.getDualArmJointState())
 
 
     # -----------------------------------------------------------------
     def main(self):
-
         rospy.loginfo("dual_ur_rtde_node starts.")
         # 打印初始时的关节角
         print("arm_0 initial joint angle: ", self.dual_arm.arm_0.getJointAngle())
         print("arm_1 initial joint angle: ", self.dual_arm.arm_1.getJointAngle())
 
-        # arm_0_joint_angle = self.dual_arm.arm_0.getJointAngle()
-        # arm_0_joint_angle.append(0.1)
-        # arm_0_joint_angle.append(0.1)
-        # arm_0_joint_angle.append(0.0)
+        rate = rospy.Rate(self.ros_rate)
 
-        # arm_0_traj = []
-        # arm_0_traj.append(arm_0_joint_angle)
+        while not rospy.is_shutdown():
 
-        # arm_0_joint_angle[5] += np.pi / 6
-        # arm_0_traj.append(arm_0_joint_angle)
+            self.publishDualArmJointState()
 
-        # arm_0_joint_angle[5] += np.pi / 6
-        # arm_0_traj.append(arm_0_joint_angle)
-
-        # arm_0_joint_angle[5] += np.pi / 6
-        # arm_0_traj.append(arm_0_joint_angle)
-
-        # print(arm_0_traj)
-
-        # self.dual_arm.arm_0.rtde_c.moveJ(arm_0_traj, asynchronous=False)
-
-
-
-        # rate = rospy.Rate(self.ros_rate)
-
-        # while not rospy.is_shutdown():
-
-        #     self.publishDualArmJointState()
-
-        #     rate.sleep()
+            rate.sleep()
 
 
         # shutdown the robots
