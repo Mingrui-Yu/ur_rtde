@@ -4,6 +4,7 @@ import rospy
 import numpy as np
 from scipy.spatial.transform import Rotation as sciR
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import PoseStamped
 from ur_rtde_msgs.msg import VectorStamped
 from moveit_msgs.msg import RobotTrajectory
 
@@ -18,6 +19,9 @@ from utils import *
 # --------------------------------------------------------------------------------
 class DualURrtdeNode():
     def __init__(self):
+        self.camera_frame_id = "rgb_camera_link"
+        self.world_frame_id = "world"
+
         # left arm
         ur_0_home_pose = None
         ur_0_tcp_offset_trans = rospy.get_param("robot_configs/arm_0/tcp_in_ee_pose/position")
@@ -36,10 +40,6 @@ class DualURrtdeNode():
         
         self.dual_arm = DualURrtde(arm_0, arm_1)
 
-        self.ros_rate = 30
-
-        self.dual_arm_joint_state_pub = rospy.Publisher("state/dual_arm/joint_states", JointState, queue_size=1)
-
         rospy.Subscriber("control/dual_arm/joint_vel_command", VectorStamped, 
             self.dualArmJointVelCommandCb)
         rospy.Subscriber("control/arm_0/joint_trajectory_command", RobotTrajectory, 
@@ -47,7 +47,15 @@ class DualURrtdeNode():
         rospy.Subscriber("control/arm_1/joint_trajectory_command", RobotTrajectory, 
             self.arm1JointTrajCommandCb)
         rospy.Subscriber("control/dual_arm/joint_trajectory_command", RobotTrajectory, 
-            self.arm1JointTrajCommandCb)
+            self.dualArmJointTrajCommandCb)
+
+        self.ros_rate = 30
+        # self.dual_arm_joint_state_pub = rospy.Publisher("state/dual_arm/joint_states", JointState, queue_size=1)
+        self.dual_arm_joint_state_pub = rospy.Publisher("state/real_time/dual_arm/joint_states", JointState, queue_size=1)
+        self.arm_0_tcp_pose_in_world_pub = rospy.Publisher("state/real_time/arm_0/tcp_pose_in_world", PoseStamped, queue_size=1)
+        self.arm_1_tcp_pose_in_world_pub = rospy.Publisher("state/real_time/arm_1/tcp_pose_in_world", PoseStamped, queue_size=1)
+        self.arm_0_tcp_pose_in_cam_pub = rospy.Publisher("state/real_time/arm_0/tcp_pose_in_cam", PoseStamped, queue_size=1)
+        self.arm_1_tcp_pose_in_cam_pub = rospy.Publisher("state/real_time/arm_1/tcp_pose_in_cam", PoseStamped, queue_size=1)
 
         # self.dual_arm_move_joint_pos_srv = rospy.Service("control/dual_arm/joint_pos_command", 
         #     ExecuteToJointPosService, self.dualArmToJointPos)
@@ -61,6 +69,9 @@ class DualURrtdeNode():
     # -----------------------------------------------------------------
     def dualArmJointVelCommandCb(self, msg):
         dual_arm_joint_vel = msg.data
+
+        print(dual_arm_joint_vel)
+
         if len(dual_arm_joint_vel) != 12:
             rospy.logerr("Invalid dual_arm_joint_vel command, the size is %d !", len(dual_arm_joint_vel))
 
@@ -70,15 +81,15 @@ class DualURrtdeNode():
     
     # -----------------------------------------------------------------
     def arm0JointTrajCommandCb(self, msg):
-        self.dual_arm.arm_0.moveJointTrajectory(msg, asynchronous=True)
+        self.dual_arm.arm_0.moveJointTrajectory(msg)
 
     # -----------------------------------------------------------------
     def arm1JointTrajCommandCb(self, msg):
-        self.dual_arm.arm_1.moveJointTrajectory(msg, asynchronous=True)
+        self.dual_arm.arm_1.moveJointTrajectory(msg)
 
     # -----------------------------------------------------------------
     def dualArmJointTrajCommandCb(self, msg):
-        self.dual_arm.moveJointTrajectory(msg, asynchronous=True)
+        self.dual_arm.moveJointTrajectory(msg)
 
 
     # # -----------------------------------------------------------------
@@ -128,21 +139,7 @@ class DualURrtdeNode():
     #         rate.sleep()
 
     #     return ExecuteToEndPoseResponse(True)
-        
-
-    # -----------------------------------------------------------------
-    def getDualArmJointState(self):
-        joint_state = JointState()
-        joint_state.name = self.dual_arm.arm_0.joint_names + self.dual_arm.arm_1.joint_names
-        joint_state.position = self.dual_arm.arm_0.getJointAngle() + self.dual_arm.arm_1.getJointAngle()
-        joint_state.velocity = self.dual_arm.arm_0.getJointVel() + self.dual_arm.arm_1.getJointVel()
-
-        return joint_state
-
-
-    # -----------------------------------------------------------------
-    def publishDualArmJointState(self):
-        self.dual_arm_joint_state_pub.publish(self.getDualArmJointState())
+    
 
 
     # -----------------------------------------------------------------
@@ -152,11 +149,24 @@ class DualURrtdeNode():
         print("arm_0 initial joint angle: ", self.dual_arm.arm_0.getJointAngle())
         print("arm_1 initial joint angle: ", self.dual_arm.arm_1.getJointAngle())
 
-        rate = rospy.Rate(self.ros_rate)
+        rate = rospy.Rate(30)
 
         while not rospy.is_shutdown():
 
-            self.publishDualArmJointState()
+            # 发布 joint state
+            self.dual_arm_joint_state_pub.publish(self.dual_arm.getDualArmJointState())
+            # rospy.logdebug("UR rtde: current joint pos 0: %.5f", self.dual_arm.getDualArmJointState().position[0])
+
+            # 发布 TCP poses in world
+            arm_0_tcp_posestamped = self.dual_arm.arm_0.getTcpPose(target_frame_id=self.world_frame_id)
+            arm_1_tcp_posestamped = self.dual_arm.arm_1.getTcpPose(target_frame_id=self.world_frame_id)
+            self.arm_0_tcp_pose_in_world_pub.publish(arm_0_tcp_posestamped)
+            self.arm_1_tcp_pose_in_world_pub.publish(arm_1_tcp_posestamped)
+
+            arm_0_tcp_posestamped = self.dual_arm.arm_0.getTcpPose(target_frame_id=self.camera_frame_id)
+            arm_1_tcp_posestamped = self.dual_arm.arm_1.getTcpPose(target_frame_id=self.camera_frame_id)
+            self.arm_0_tcp_pose_in_cam_pub.publish(arm_0_tcp_posestamped)
+            self.arm_1_tcp_pose_in_cam_pub.publish(arm_1_tcp_posestamped)
 
             rate.sleep()
 
@@ -171,7 +181,7 @@ class DualURrtdeNode():
 # --------------------------------------------------------------
 if __name__ == "__main__":
     try:
-        rospy.init_node("dual_ur_rtde_node")
+        rospy.init_node("dual_ur_rtde_node", log_level=rospy.DEBUG)
         
         dual_ur = DualURrtdeNode()
         dual_ur.main()

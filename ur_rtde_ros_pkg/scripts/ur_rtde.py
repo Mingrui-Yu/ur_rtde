@@ -17,6 +17,7 @@ import rtde_receive
 import tf2_ros
 from tf2_geometry_msgs import PointStamped, PoseStamped
 from geometry_msgs.msg import TwistStamped
+from trajectory_msgs.msg import JointTrajectoryPoint
 from moveit_msgs.msg import RobotTrajectory
 import tf.transformations
 
@@ -55,6 +56,8 @@ class URrtde(object):
     
     # ----------------------------------------------------------------------
     def getJointAngle(self):
+        # print("self.rtde_r.isConnected(): ", self.rtde_r.isConnected())
+        # print("self.rtde_r.getActualQ(): " , self.rtde_r.getActualQ())
         return self.rtde_r.getActualQ()
 
 
@@ -184,34 +187,34 @@ class URrtde(object):
 
         self.rtde_c.moveL(np.concatenate([target_pos, target_rotvec]), 
             speed=speed, acceleration=acceleration, asynchronous=asynchronous) # time cost: ~0.02s
-        
+
 
     # ----------------------------------------------------------------------
-    def moveJointTrajectory(self, trajectory, asynchronous=False):
+    def moveJointTrajectory(self, trajectory):
+        servo_rate = 500 # Hz
+        trajectory = trajectoryInterpolation(trajectory, dt=1.0/servo_rate)
+
         n_waypoints = len(trajectory.joint_trajectory.points)
-        joint_traj = []
+
+        # Move to initial joint position with a regular moveJ
+        self.rtde_c.moveJ(trajectory.joint_trajectory.points[0].positions)
+
+        rate = rospy.Rate(servo_rate)
+        
         for i in range(n_waypoints):
             point = trajectory.joint_trajectory.points[i]
+            self.rtde_c.servoJ(list(point.positions), 1.0, 1.0, 1.0/servo_rate, 0.1, 300.0)
+            rate.sleep()
 
-            # 根据 waypoint 的时间戳，计算speed。默认为waypoint之间是匀速直线运动。
-            if i == 0:
-                speed = 0.1 
-            else:
-                last_point = trajectory.joint_trajectory.points[i-1]
-                delta_t = point.time_from_start.to_sec() - last_point.time_from_start.to_sec()
-                max_joint_movement = np.max(np.abs(np.array(point.positions) - np.array(last_point.positions)))
-                speed = max_joint_movement / delta_t
+        # 最后 0.5s 始终以最后一个路径点作为伺服目标
+        for i in range(int(servo_rate * 0.5)):
+            point = trajectory.joint_trajectory.points[-1]
+            self.rtde_c.servoJ(list(point.positions), 1.0, 1.0, 1.0/servo_rate, 0.1, 300.0)
+            rate.sleep()
 
-            rtde_waypoint = point.positions # joint position
-            rtde_waypoint.append(1.0) # acceleration
-            rtde_waypoint.append(speed) # speed
-            rtde_waypoint.append(0) # blend
-
-            joint_traj.append(rtde_waypoint)
-
-        self.rtde_c.moveJ(joint_traj, asynchronous)
-
-
+        self.rtde_c.servoStop()
+        
+                
 
 
 
